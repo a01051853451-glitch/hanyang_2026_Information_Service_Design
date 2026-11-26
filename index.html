@@ -24,7 +24,28 @@ const status=document.createElement('div');status.className='scene-position';sta
 function rebuild(){const y=document.querySelector('.story').offsetTop,max=document.documentElement.scrollHeight-innerHeight;points=[0,innerHeight*.8,...beats.map(n=>Math.min(max,y+n*innerHeight))];index=nearest(scrollY);report()}
 function nearest(y){return points.reduce((best,p,i)=>Math.abs(p-y)<Math.abs(points[best]-y)?i:best,0)}
 function report(){status.textContent=String(index+1).padStart(2,'0')+' / '+points.length}
-function move(i){if(busy)return;i=Math.max(0,Math.min(points.length-1,i));const start=scrollY,end=points[i];index=i;report();if(Math.abs(end-start)<1)return;busy=true;const duration=matchMedia('(prefers-reduced-motion: reduce)').matches?0:([3,6,8,10,12].includes(i)&&end>start||[2,5,7,9,11].includes(i)&&end<start?3000:Math.min(1800,850+Math.abs(end-start)/innerHeight*110)),t0=performance.now();function frame(now){let t=duration?Math.min(1,(now-t0)/duration):1,e=t*t*t*(t*(t*6-15)+10);window.scrollTo({top:start+(end-start)*e,behavior:'instant'});if(t<1)raf=requestAnimationFrame(frame);else{raf=0;setTimeout(()=>{busy=false},220)}}raf=requestAnimationFrame(frame)}
+
+// Stretch only the return-to-3D intervals; all other timeline intervals keep their original clock.
+function returnRotationClock(start,end,baseDuration,storyTop,viewport){
+  const ease=t=>t*t*t*(t*(t*6-15)+10);
+  const ramp=x=>{x=Math.max(0,Math.min(1,x));return x*x*(3-2*x)};
+  const weight=y=>{
+    const pos=(y-storyTop)/viewport-2,stage=Math.floor(pos/3),phase=pos-stage*3;
+    if(stage<1||stage>4||phase<0||phase>.7)return 1;
+    return 1+.5*ramp(phase/.04)*ramp((.7-phase)/.04);
+  };
+  const steps=1600,clock=new Float64Array(steps+1);
+  for(let j=1;j<=steps;j++){
+    const y=start+(end-start)*ease((j-.5)/steps);
+    clock[j]=clock[j-1]+baseDuration/steps*weight(y);
+  }
+  return {duration:clock[steps],progress(elapsed){
+    if(elapsed<=0)return 0;if(elapsed>=clock[steps])return 1;
+    let lo=0,hi=steps;while(hi-lo>1){const mid=(lo+hi)>>1;if(clock[mid]<=elapsed)lo=mid;else hi=mid}
+    return ease((lo+(elapsed-clock[lo])/(clock[hi]-clock[lo]))/steps);
+  }};
+}
+function move(i){if(busy)return;i=Math.max(0,Math.min(points.length-1,i));const start=scrollY,end=points[i];index=i;report();if(Math.abs(end-start)<1)return;busy=true;const baseDuration=matchMedia('(prefers-reduced-motion: reduce)').matches?0:([3,6,8,10,12].includes(i)&&end>start||[2,5,7,9,11].includes(i)&&end<start?3000:Math.min(1800,850+Math.abs(end-start)/innerHeight*110)),clock=returnRotationClock(start,end,baseDuration,document.querySelector('.story').offsetTop,innerHeight),t0=performance.now();function frame(now){const elapsed=now-t0,e=clock.duration?clock.progress(elapsed):1;window.scrollTo({top:start+(end-start)*e,behavior:'instant'});if(elapsed<clock.duration)raf=requestAnimationFrame(frame);else{raf=0;setTimeout(()=>{busy=false},220)}}raf=requestAnimationFrame(frame)}
 function editable(e){return !!e.target.closest('input,textarea,select,[contenteditable="true"],dialog[open]')}
 addEventListener('wheel',e=>{if(e.ctrlKey||editable(e)||Math.abs(e.deltaX)>Math.abs(e.deltaY))return;e.preventDefault();const now=performance.now(),gap=now-lastWheel;lastWheel=now;if(gap>200){gestureUsed=false;acc=0;dir=0}if(busy||gestureUsed)return;const d=Math.sign(e.deltaY);if(!d)return;if(d!==dir){acc=0;dir=d}acc+=Math.abs(e.deltaY)*(e.deltaMode===1?16:e.deltaMode===2?innerHeight:1);if(acc>=12){gestureUsed=true;move(nearest(scrollY)+d)}},{passive:false});
 addEventListener('keydown',e=>{if(editable(e)||e.altKey||e.ctrlKey||e.metaKey||e.target.closest('button,a'))return;let d=['ArrowDown','PageDown',' '].includes(e.key)?1:['ArrowUp','PageUp'].includes(e.key)?-1:0;if(e.key===' '&&e.shiftKey)d=-1;if(d||['Home','End'].includes(e.key)){e.preventDefault();if(e.repeat||busy)return;move(e.key==='Home'?0:e.key==='End'?points.length-1:nearest(scrollY)+d)}},{capture:true});
